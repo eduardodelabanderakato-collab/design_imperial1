@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sustainable City</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #0b1020; font-family: system-ui, sans-serif; }
+  #info {
+    position: fixed; top: 16px; left: 16px; color: #eaf6ff;
+    background: rgba(10,18,35,.55); padding: 10px 14px; border-radius: 10px;
+    font-size: 13px; line-height: 1.5; backdrop-filter: blur(6px); z-index: 10;
+    border: 1px solid rgba(255,255,255,.12);
+  }
+  #info b { color: #7fe7c4; }
+</style>
+</head>
+<body>
+<div id="info">
+  <b>Sustainable City</b><br>
+  Drag to rotate · Scroll to zoom · Right-drag to pan
+</div>
+<script type="importmap">
+{ "imports": {
+  "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+}}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// ---- Scene basics ----
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x9fd3e8);
+scene.fog = new THREE.Fog(0x9fd3e8, 40, 90);
+
+const camera = new THREE.PerspectiveCamera(45, innerWidth/innerHeight, 0.1, 200);
+camera.position.set(26, 20, 26);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.appendChild(renderer.domElement);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.minDistance = 10;
+controls.maxDistance = 70;
+controls.maxPolarAngle = Math.PI / 2.05;
+controls.target.set(0, 1, 0);
+
+// ---- Lighting ----
+scene.add(new THREE.HemisphereLight(0xffffff, 0x4a6b4a, 0.9));
+const sun = new THREE.DirectionalLight(0xfff4e0, 1.4);
+sun.position.set(20, 30, 15);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.left = -25; sun.shadow.camera.right = 25;
+sun.shadow.camera.top = 25; sun.shadow.camera.bottom = -25;
+sun.shadow.camera.far = 80;
+scene.add(sun);
+
+// ---- Base plate (the 30cm x 15cm rectangle) ----
+const W = 30, D = 15; // city footprint units
+const base = new THREE.Mesh(
+  new THREE.BoxGeometry(W, 1, D),
+  new THREE.MeshStandardMaterial({ color: 0x3f7d4f, roughness: 1 })
+);
+base.position.y = -0.5;
+base.receiveShadow = true;
+scene.add(base);
+
+// thin border frame
+const frame = new THREE.Mesh(
+  new THREE.BoxGeometry(W + 0.6, 1.2, D + 0.6),
+  new THREE.MeshStandardMaterial({ color: 0x2a2f3a, roughness: 0.8 })
+);
+frame.position.y = -0.6;
+scene.add(frame);
+
+// ---- River (winding through the city) ----
+const riverShape = new THREE.Shape();
+const riverPts = [];
+for (let i = 0; i <= 60; i++) {
+  const t = i / 60;
+  const x = -W/2 + t * W;
+  const z = Math.sin(t * Math.PI * 2.2) * 3.2;
+  riverPts.push(new THREE.Vector2(x, z));
+}
+const riverWidth = 2.2;
+// build river as a ribbon
+const riverGeo = new THREE.PlaneGeometry(1,1);
+const riverGroup = new THREE.Group();
+const riverMat = new THREE.MeshStandardMaterial({
+  color: 0x2f9fe0, roughness: 0.15, metalness: 0.3,
+  transparent: true, opacity: 0.85
+});
+for (let i = 0; i < riverPts.length - 1; i++) {
+  const a = riverPts[i], b = riverPts[i+1];
+  const dx = b.x - a.x, dz = b.y - a.y;
+  const len = Math.hypot(dx, dz);
+  const seg = new THREE.Mesh(new THREE.PlaneGeometry(len + 0.3, riverWidth), riverMat);
+  seg.rotation.x = -Math.PI/2;
+  seg.rotation.z = -Math.atan2(dz, dx);
+  seg.position.set((a.x+b.x)/2, 0.06, (a.y+b.y)/2);
+  seg.receiveShadow = true;
+  riverGroup.add(seg);
+}
+scene.add(riverGroup);
+
+// ---- Reusable curved-roof house builder ----
+function makeHouse(wallColor) {
+  const g = new THREE.Group();
+  const bw = 1.6, bh = 1.2, bd = 1.6; // body dims
+  const body = new THREE.Mesh(
+    new THREE.BoxGeometry(bw, bh, bd),
+    new THREE.MeshStandardMaterial({ color: wallColor, roughness: 0.9 })
+  );
+  body.position.y = bh/2;
+  body.castShadow = true; body.receiveShadow = true;
+  g.add(body);
+
+  // Semi-circular (half-cylinder) curved roof
+  const roof = new THREE.Mesh(
+    new THREE.CylinderGeometry(bw/2*1.05, bw/2*1.05, bd*1.08, 24, 1, false, 0, Math.PI),
+    new THREE.MeshStandardMaterial({ color: 0xd9572b, roughness: 0.7 })
+  );
+  roof.rotation.z = -Math.PI/2;
+  roof.rotation.y = Math.PI/2;
+  roof.position.y = bh;
+  roof.castShadow = true;
+  g.add(roof);
+
+  // solar panel strip on the curve
+  const panel = new THREE.Mesh(
+    new THREE.BoxGeometry(0.5, 0.04, bd*0.7),
+    new THREE.MeshStandardMaterial({ color: 0x16324f, roughness: 0.3, metalness: 0.6 })
+  );
+  panel.position.set(0, bh + bw/2*0.95, 0);
+  g.add(panel);
+
+  // door
+  const door = new THREE.Mesh(
+    new THREE.BoxGeometry(0.4, 0.6, 0.05),
+    new THREE.MeshStandardMaterial({ color: 0x5a3a22 })
+  );
+  door.position.set(0, 0.3, bd/2 + 0.01);
+  g.add(door);
+
+  return g;
+}
+
+const wallColors = [0xf2e9d8, 0xe8d3b0, 0xf5ddd0, 0xdfe9e0, 0xeae0f0];
+
+// ---- Tree builder ----
+function makeTree() {
+  const t = new THREE.Group();
+  const trunk = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.08, 0.12, 0.5, 6),
+    new THREE.MeshStandardMaterial({ color: 0x6b4a2b })
+  );
+  trunk.position.y = 0.25; trunk.castShadow = true;
+  t.add(trunk);
+  const leaves = new THREE.Mesh(
+    new THREE.IcosahedronGeometry(0.45, 0),
+    new THREE.MeshStandardMaterial({ color: 0x3f9d52, flatShading: true })
+  );
+  leaves.position.y = 0.8; leaves.castShadow = true;
+  t.add(leaves);
+  return t;
+}
+
+// ---- Wind turbine builder ----
+function makeTurbine() {
+  const g = new THREE.Group();
+  const pole = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.06, 0.09, 3, 8),
+    new THREE.MeshStandardMaterial({ color: 0xf0f0f0 })
+  );
+  pole.position.y = 1.5; pole.castShadow = true;
+  g.add(pole);
+  const hub = new THREE.Group();
+  hub.position.y = 3;
+  for (let i = 0; i < 3; i++) {
+    const blade = new THREE.Mesh(
+      new THREE.BoxGeometry(0.08, 1.1, 0.02),
+      new THREE.MeshStandardMaterial({ color: 0xffffff })
+    );
+    blade.position.y = 0.55;
+    const arm = new THREE.Group();
+    arm.add(blade);
+    arm.rotation.z = i * (Math.PI * 2 / 3);
+    hub.add(arm);
+  }
+  g.add(hub);
+  g.userData.hub = hub;
+  return g;
+}
+
+// ---- Place houses on a grid, avoiding the river ----
+const turbines = [];
+function nearRiver(x, z) {
+  // approximate river z at this x
+  const t = (x + W/2) / W;
+  const rz = Math.sin(t * Math.PI * 2.2) * 3.2;
+  return Math.abs(z - rz) < riverWidth/2 + 1.0;
+}
+
+let ci = 0;
+for (let x = -W/2 + 2; x <= W/2 - 2; x += 2.4) {
+  for (let z = -D/2 + 1.5; z <= D/2 - 1.5; z += 2.4) {
+    if (nearRiver(x, z)) {
+      // along the river: trees & greenery
+      if (Math.random() > 0.4) {
+        const tr = makeTree();
+        tr.position.set(x + (Math.random()-0.5), 0, z + (Math.random()-0.5));
+        const s = 0.7 + Math.random()*0.6; tr.scale.setScalar(s);
+        scene.add(tr);
+      }
+      continue;
+    }
+    const h = makeHouse(wallColors[ci++ % wallColors.length]);
+    h.position.set(x, 0, z);
+    h.rotation.y = (Math.random() < 0.5 ? 0 : Math.PI/2);
+    const s = 0.85 + Math.random()*0.3; h.scale.setScalar(s);
+    scene.add(h);
+    // occasional tree next to a house
+    if (Math.random() > 0.7) {
+      const tr = makeTree();
+      tr.position.set(x + 1, 0, z + 0.6);
+      scene.add(tr);
+    }
+  }
+}
+
+// wind turbines at the corners
+[[-W/2+1.5, -D/2+1.5], [W/2-1.5, D/2-1.5], [-W/2+1.5, D/2-1.5]].forEach(([x,z]) => {
+  const tb = makeTurbine();
+  tb.position.set(x, 0, z);
+  scene.add(tb);
+  turbines.push(tb);
+});
+
+// a couple of footbridges over the river
+for (let i = 0; i < 3; i++) {
+  const t = 0.2 + i * 0.3;
+  const x = -W/2 + t * W;
+  const z = Math.sin(t * Math.PI * 2.2) * 3.2;
+  const bridge = new THREE.Mesh(
+    new THREE.BoxGeometry(0.8, 0.12, riverWidth + 1),
+    new THREE.MeshStandardMaterial({ color: 0x8a6a44, roughness: 0.9 })
+  );
+  bridge.position.set(x, 0.35, z);
+  bridge.castShadow = true;
+  scene.add(bridge);
+}
+
+// ---- Animate ----
+function animate() {
+  requestAnimationFrame(animate);
+  turbines.forEach(tb => { tb.userData.hub.rotation.z += 0.05; });
+  controls.update();
+  renderer.render(scene, camera);
+}
+animate();
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+</script>
+</body>
+</html>
